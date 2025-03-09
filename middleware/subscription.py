@@ -7,6 +7,8 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.dispatcher.event.bases import CancelHandler
 
 from database import operations
+from services.subscription_service import check_channel_subscription
+from config import PREMIUM_CHANNEL_ID
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +27,8 @@ class SubscriptionMiddleware(BaseMiddleware):
         За исключением команд /start, /help, /subscription, /reset 
         и кнопок подписки, проверяет:
         1. Наличие действующей подписки
-        2. Наличие бесплатных сообщений
+        2. Наличие подписки на премиум-канал
+        3. Наличие бесплатных сообщений
         """
         # Определяем User ID в зависимости от типа события
         if isinstance(event, Message):
@@ -55,7 +58,16 @@ class SubscriptionMiddleware(BaseMiddleware):
                 operations.create_user(user_id, username, first_name, last_name)
             return await handler(event, data)
         
-        # Проверяем подписку и лимиты
+        # Проверяем подписку на премиум-канал
+        bot = data.get("bot")
+        has_channel_subscription = await check_channel_subscription(user_id, bot)
+        
+        # Если пользователь подписан на канал, обновляем его статус подписки
+        if has_channel_subscription and user.get("subscription_type") == "free":
+            operations.update_user_subscription(user_id, "channel_premium", 1)  # Обновляем на 1 месяц
+            logger.info(f"Пользователь {user_id} получил премиум через подписку на канал")
+        
+        # Проверяем платную подписку напрямую
         if user.get("subscription_type") != "free":
             # Проверяем, не истекла ли подписка
             if user.get("subscription_end_date"):
@@ -63,19 +75,32 @@ class SubscriptionMiddleware(BaseMiddleware):
                 if end_date > datetime.now():
                     # Подписка активна, пропускаем
                     return await handler(event, data)
-                else:
-                    # Подписка истекла, обновляем статус
+                # Подписка истекла, но пользователь может быть подписан на канал
+                elif not has_channel_subscription:
+                    # Обновляем статус подписки, если нет подписки на канал
                     operations.update_user_subscription(user_id, "free")
+        
+        # Если пользователь подписан на канал, пропускаем проверку лимита сообщений
+        if has_channel_subscription:
+            return await handler(event, data)
         
         # Если это не команда и не callback, и число бесплатных сообщений исчерпано
         if isinstance(event, Message) and not self._is_command(text) and user.get("free_messages_left", 0) <= 0:
             if not self._is_subscription_related(text):
                 # Отправляем сообщение о превышении лимита
+                channel_name = PREMIUM_CHANNEL_ID.replace("@", "")
+                channel_link = f"https://t.me/{channel_name}"
+                
                 await message.answer(
                     "⚠️ Вы исчерпали лимит бесплатных сообщений.\n\n"
-                    "Для продолжения общения с ботом приобретите подписку.",
+                    "Для продолжения общения с ботом приобретите подписку или "
+                    "подпишитесь на наш премиум-канал!",
                     reply_markup=message.bot.types.InlineKeyboardMarkup(
                         inline_keyboard=[
+                            [message.bot.types.InlineKeyboardButton(
+                                text="💫 Подписаться на премиум-канал", 
+                                url=channel_link
+                            )],
                             [message.bot.types.InlineKeyboardButton(
                                 text="💎 Узнать о премиум-подписке", 
                                 callback_data="premium_info"
@@ -100,7 +125,7 @@ class SubscriptionMiddleware(BaseMiddleware):
             return True
         
         # Пропускаем callback'и, связанные с подпиской
-        if text.startswith(('subscribe:', 'payment:', 'premium_info')):
+        if isinstance(text, str) and any(text.startswith(prefix) for prefix in ['subscribe:', 'payment:', 'premium_info']):
             return True
         
         return False

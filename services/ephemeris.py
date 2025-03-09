@@ -137,19 +137,98 @@ def assign_houses_to_planets(planets, houses):
     return result
 
 def format_natal_chart(planets, houses):
-    """Форматирует натальную карту для вывода пользователю"""
+    """Форматирует натальную карту для вывода пользователю с эмодзи и красивым оформлением"""
     planets_with_houses = assign_houses_to_planets(planets, houses)
+    
+    planet_emojis = {
+        "Sun": "☀️",
+        "Moon": "🌙",
+        "Mercury": "☿️",
+        "Venus": "♀️",
+        "Mars": "♂️",
+        "Jupiter": "♃",
+        "Saturn": "♄",
+        "Uranus": "♅",
+        "Neptune": "♆",
+        "Pluto": "♇",
+        "Lilith": "🔮",
+        "North Node": "☊",
+        "South Node": "☋",
+        "Ascendant": "⬆️",
+        "MC": "🔝"
+    }
+    
+    sign_emojis = {
+        "Овен": "♈️",
+        "Телец": "♉️",
+        "Близнецы": "♊️",
+        "Рак": "♋️",
+        "Лев": "♌️",
+        "Дева": "♍️",
+        "Весы": "♎️",
+        "Скорпион": "♏️",
+        "Стрелец": "♐️",
+        "Козерог": "♑️",
+        "Водолей": "♒️",
+        "Рыбы": "♓️"
+    }
+    
+    # Создаем заголовок
+    header = "✨ ВАША НАТАЛЬНАЯ КАРТА ✨\n"
+    header += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # Форматируем информацию о планетах
+    planets_section = "🪐 ПЛАНЕТЫ\n"
+    planets_section += "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
     
     formatted_data = []
     for planet, data in planets_with_houses.items():
+        if planet in ["Ascendant", "MC"]:
+            continue  # Добавим их позже в секцию Асцендент и MC
+            
         sign = get_zodiac_sign(data["longitude"])
         house = data["house"]
         planet_ru = translate_to_russian(planet)
-        formatted_data.append([planet_ru, sign, f"Дом {house}" if house else "Не определен"])
+        
+        planet_emoji = planet_emojis.get(planet, "")
+        sign_emoji = sign_emojis.get(sign, "")
+        
+        formatted_data.append([
+            f"{planet_emoji} {planet_ru}", 
+            f"{sign_emoji} {sign}", 
+            f"Дом {house}"
+        ])
     
-    result = tabulate(formatted_data, headers=["Планета", "Знак", "Дом"], tablefmt="pretty")
-    logging.info("Натальная карта отформатирована")
-    return result
+    # Сортируем планеты в традиционном астрологическом порядке
+    planet_order = [
+        "Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", 
+        "Uranus", "Neptune", "Pluto", "Lilith", "North Node", "South Node"
+    ]
+    formatted_data.sort(key=lambda x: planet_order.index(next((p for p in planet_order if translate_to_russian(p) in x[0]), len(planet_order))))
+    
+    # Добавляем строки в секцию планет
+    for row in formatted_data:
+        planets_section += f"{row[0]:<20} {row[1]:<15} {row[2]:<10}\n"
+    
+    # Создаем секцию для Асцендента и MC
+    houses_section = "\n🏠 УГЛОВЫЕ ДОМА\n"
+    houses_section += "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+    
+    for house_point in ["Ascendant", "MC"]:
+        if house_point in planets_with_houses:
+            sign = get_zodiac_sign(planets_with_houses[house_point]["longitude"])
+            point_ru = translate_to_russian(house_point)
+            point_emoji = planet_emojis.get(house_point, "")
+            sign_emoji = sign_emojis.get(sign, "")
+            
+            houses_section += f"{point_emoji} {point_ru:<18} {sign_emoji} {sign:<15}\n"
+    
+    # Объединяем все секции
+    formatted_chart = f"{header}{planets_section}{houses_section}\n"
+    formatted_chart += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    formatted_chart += "Карта рассчитана с помощью Swiss Ephemeris"
+
+    return formatted_chart
 
 def get_aspects_between_charts(chart1, chart2):
     """Вычисляет аспекты между двумя натальными картами"""
