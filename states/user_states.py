@@ -36,6 +36,7 @@ class HoroscopeSettingsStates(StatesGroup):
 class SubscriptionStates(StatesGroup):
     """Состояния для процесса подписки"""
     selecting_plan = State()
+    selecting_payment_method = State()  # Добавленное состояние
     processing_payment = State()
     confirming_payment = State()
 

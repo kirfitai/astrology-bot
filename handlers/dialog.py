@@ -24,12 +24,15 @@ async def user_dialog_handler(message: types.Message, state: FSMContext):
         subscription_type = user.get("subscription_type", "free")
         
         if subscription_type == "free":
+            # Отправляем заблюренное сообщение и предложение приобрести подписку
             await message.answer(
-                "⚠️ Вы исчерпали лимит бесплатных сообщений.\n\n"
-                "Для продолжения общения с ботом приобретите подписку.",
+                "⚠️ Вы исчерпали лимит бесплатных сообщений (3 сообщения).\n\n"
+                "<span class='tg-spoiler'>Для продолжения общения с ботом приобретите подписку.</span>",
+                parse_mode="HTML",
                 reply_markup=types.InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [types.InlineKeyboardButton(text="💎 Узнать о премиум-подписке", callback_data="premium_info")]
+                        [types.InlineKeyboardButton(text="💎 Разблокировать ответ (90 ⭐️)", callback_data="unlock_message")],
+                        [types.InlineKeyboardButton(text="💎 Узнать о подписке", callback_data="premium_info")]
                     ]
                 )
             )
@@ -99,11 +102,11 @@ async def user_dialog_handler(message: types.Message, state: FSMContext):
         free_left = user.get("free_messages_left", 0)
         if free_left <= 3:  # Показываем предупреждение, если осталось мало сообщений
             await message.answer(
-                f"⚠️ У вас осталось {free_left} бесплатных сообщений.\n"
-                "Приобретите подписку, чтобы получить безлимитное общение.",
+                f"⚠️ У вас осталось {free_left} бесплатных сообщений из 3.\n"
+                "После исчерпания лимита ответы будут скрыты и доступны только по подписке.",
                 reply_markup=types.InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [types.InlineKeyboardButton(text="💎 Узнать о премиум-подписке", callback_data="premium_info")]
+                        [types.InlineKeyboardButton(text="💎 Узнать о подписке", callback_data="premium_info")]
                     ]
                 )
             )
@@ -122,7 +125,33 @@ async def get_or_create_message_history(state: FSMContext):
     
     return history
 
+# Обработчик разблокировки сообщения
+async def unlock_message_callback(callback: types.CallbackQuery, state: FSMContext):
+    user_id = str(callback.from_user.id)
+    
+    # Отправляем счет для разблокировки одного сообщения
+    from aiogram.types import LabeledPrice
+    
+    prices = [LabeledPrice(label="Разблокировка ответа", amount=90)]
+    
+    await callback.message.answer_invoice(
+        title="Разблокировка ответа",
+        description="Одноразовая оплата для разблокировки ответа бота",
+        payload=f"unlock_msg_{user_id}_{int(datetime.now().timestamp())}",
+        provider_token="",
+        currency="XTR",
+        prices=prices
+    )
+    
+    await callback.answer()
+
 def register_handlers(dp: Dispatcher):
     """Регистрирует обработчики для диалога"""
     # Обработчик сообщений в режиме диалога
     dp.message.register(user_dialog_handler, StateFilter(NatalChartStates.dialog_active))
+    
+    # Обработчик разблокировки сообщения
+    dp.callback_query.register(
+        unlock_message_callback,
+        lambda c: c.data == "unlock_message"
+    )

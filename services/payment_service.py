@@ -2,6 +2,8 @@ from aiogram import Bot
 import logging
 import json
 import uuid
+import time
+import random
 from datetime import datetime, timedelta
 from database import operations
 from config import SUBSCRIPTION_PRICES, TG_STARS_MULTIPLIER
@@ -73,104 +75,122 @@ class TelegramStarsPayment:
     """Класс для работы с платежами через Telegram Stars"""
     
     @staticmethod
-    async def create_stars_payment_options(bot: Bot, chat_id: int, plan: str, stars_amount: int):
+    async def create_stars_invoice(bot: Bot, user_id: int, stars_amount: int, purpose: str):
         """
-        Отправляет пользователю кнопки для выбора периода подписки
+        Создает инвойс для оплаты звездами
         
         Args:
             bot: Экземпляр бота
-            chat_id: ID чата пользователя
-            plan: Тип подписки (например, "1_month")
+            user_id: ID пользователя
             stars_amount: Количество звезд
+            purpose: Назначение платежа
             
         Returns:
-            dict: Результат отправки сообщения
+            dict: Результат создания инвойса
         """
         try:
-            # Форматируем название плана для отображения
-            plan_display = {
-                "1_week": "1 Week...",
-                "1_month": "1 Month...",
-                "3_month": "3 Months...",
-                "1_year": "1 Year..."
-            }.get(plan, plan)
+            # Генерируем уникальный ID для счета
+            invoice_id = f"inv_{int(time.time())}_{random.randint(1000, 9999)}"
             
-            # Отправляем сообщение с кнопками для подтверждения оплаты
-            message = await bot.send_message(
-                chat_id=chat_id,
-                text=f"Для активации подписки необходимо отправить {stars_amount} звёзд.\nНажмите кнопку ниже, чтобы подтвердить:",
-                reply_markup=types.InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            types.InlineKeyboardButton(
-                                text=f"✨ {plan_display} - {stars_amount} ⭐️",
-                                callback_data=f"confirm_stars:{plan}:{stars_amount}"
-                            )
-                        ],
-                        [
-                            types.InlineKeyboardButton(
-                                text="Отмена",
-                                callback_data="cancel_payment"
-                            )
-                        ]
-                    ]
+            # Создаем и отправляем инвойс
+            from aiogram.types import LabeledPrice
+            
+            # Подготавливаем данные для счета
+            title = f"Подписка на {purpose}"
+            description = f"Оплата {stars_amount} звезд за подписку на астрологического бота"
+            payload = f"sub_{purpose}_{invoice_id}"
+            provider_token = ""  # Для Telegram Stars оставляем пустым
+            currency = "XTR"    # XTR - это валюта Telegram Stars
+            prices = [LabeledPrice(label="Подписка", amount=stars_amount)]
+            
+            # Отправляем счет
+            try:
+                await bot.send_invoice(
+                    chat_id=user_id,
+                    title=title,
+                    description=description,
+                    payload=payload,
+                    provider_token=provider_token,
+                    currency=currency,
+                    prices=prices
                 )
-            )
-            
-            return {
-                "success": True,
-                "message_id": message.message_id
-            }
+                
+                return {
+                    "success": True,
+                    "invoice_id": invoice_id,
+                    "payment_url": None  # URL не требуется, так как счет отправляется напрямую
+                }
+            except Exception as e:
+                logger.error(f"Error sending invoice: {e}")
+                return {"success": False, "error": str(e)}
             
         except Exception as e:
-            logger.error(f"Error creating stars payment options: {e}")
+            logger.error(f"Error creating stars invoice: {e}")
             return {"success": False, "error": str(e)}
     
     @staticmethod
-    async def send_payment_confirmation(bot: Bot, chat_id: int, plan: str, stars_amount: int):
+    async def process_stars_transfer(user_id, plan, stars_amount, transaction_id=None):
         """
-        Отправляет пользователю запрос на подтверждение оплаты звездами
+        Обрабатывает перевод звезд
         
         Args:
-            bot: Экземпляр бота
-            chat_id: ID чата пользователя
+            user_id: ID пользователя
             plan: Тип подписки
             stars_amount: Количество звезд
+            transaction_id: ID транзакции
             
         Returns:
-            dict: Результат отправки сообщения
+            dict: Результат обработки перевода
         """
         try:
-            # Форматируем название плана для отображения
-            plan_display_name = {
-                "1_week": "Week of Premium!",
-                "1_month": "Month of Premium!",
-                "3_month": "3 Months of Premium!",
-                "1_year": "Year of Premium!"
-            }.get(plan, plan)
+            # В реальном сценарии здесь должна быть проверка статуса платежа через API Telegram
+            # Для демонстрации просто имитируем успешную обработку
             
-            # Отправляем подтверждение оплаты, используя формат как у бота Stellium
-            message = await bot.send_message(
-                chat_id=chat_id,
-                text=f"{plan_display_name}\nThank you! This keeps our service shining.\nConfirm to send!",
-                reply_markup=types.InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            types.InlineKeyboardButton(
-                                text=f"{stars_amount} ⭐️", 
-                                pay=True
-                            )
-                        ]
-                    ]
+            # Определяем длительность подписки в месяцах
+            months = 1
+            if plan == "3_month":
+                months = 3
+            elif plan == "1_year":
+                months = 12
+                
+            # Обновляем статус транзакции, если ID указан
+            if transaction_id:
+                success = operations.update_transaction_status(transaction_id, "completed")
+                
+                if success:
+                    # Активируем подписку пользователю
+                    operations.update_user_subscription(user_id, plan, months)
+                    
+                    return {
+                        "success": True,
+                        "message": f"Подписка {plan} активирована на {months} месяц(ев)"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "error": "Failed to update transaction status"
+                    }
+            else:
+                # Если ID транзакции не указан, создаем новую транзакцию
+                price = SUBSCRIPTION_PRICES.get(plan, 0)
+                transaction_id = operations.add_subscription_transaction(
+                    user_id,
+                    plan,
+                    price,
+                    "completed",
+                    "telegram_stars",
+                    months
                 )
-            )
-            
-            # При успешной отправке сообщения
-            return {
-                "success": True,
-                "message_id": message.message_id
-            }
-        
+                
+                return {
+                    "success": True,
+                    "transaction_id": transaction_id,
+                    "message": f"Подписка {plan} активирована на {months} месяц(ев)"
+                }
+                
         except Exception as e:
-            logger.error(f"Error sending payment confirmation: {e}")
+            logger.error(f"Error processing stars transfer: {e}")
             return {"success": False, "error": str(e)}
+
+# Создаем экземпляр класса для импорта
+telegram_stars_payment = TelegramStarsPayment()

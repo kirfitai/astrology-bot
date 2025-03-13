@@ -203,11 +203,36 @@ async def contact_action_callback(callback: types.CallbackQuery, state: FSMConte
         # Сохраняем анализ в базу
         operations.add_compatibility_analysis(user_id, contact_id, analysis)
         
-        # Отправляем результат
-        await callback.message.answer(
-            f"💞 Результат анализа совместимости с {contact['person_name']}:\n\n{analysis}",
-            reply_markup=get_main_menu()
-        )
+        # Проверяем, является ли пользователь премиум
+        is_premium = user.get("subscription_type") != "free"
+        
+        # Получаем количество контактов
+        contacts_count = len(operations.get_contacts(user_id))
+        
+        # Если это второй или более контакт, и пользователь на бесплатном тарифе,
+        # отправляем заблюренное сообщение и предложение
+        if contacts_count > 1 and not is_premium:
+            # Показываем заблюренный результат и предложение оплаты
+            preview_analysis = analysis[:150] + "..." if len(analysis) > 150 else analysis
+            
+            await callback.message.answer(
+                f"💞 Результат анализа совместимости с {contact['person_name']}:\n\n"
+                f"{preview_analysis}\n\n"
+                "<span class='tg-spoiler'>Полный результат анализа скрыт. Для просмотра полного анализа требуется подписка.</span>",
+                parse_mode="HTML",
+                reply_markup=types.InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [types.InlineKeyboardButton(text=f"💎 Разблокировать анализ (90 ⭐️)", callback_data=f"unlock_compatibility:{contact_id}")],
+                        [types.InlineKeyboardButton(text="💎 Оформить подписку", callback_data="subscribe_menu")]
+                    ]
+                )
+            )
+        else:
+            # Отправляем полный результат
+            await callback.message.answer(
+                f"💞 Результат анализа совместимости с {contact['person_name']}:\n\n{analysis}",
+                reply_markup=get_main_menu()
+            )
         
         # Возвращаемся в режим диалога
         await state.set_state(NatalChartStates.dialog_active)
@@ -370,48 +395,73 @@ async def process_existing_contact_action(message: types.Message, state: FSMCont
             # Сохраняем анализ в базу
             operations.add_compatibility_analysis(user_id, existing_contact_id, analysis)
             
-            # Разбиваем длинное сообщение на части (максимум 4000 символов для безопасности)
-            chunks = []
-            max_chunk_size = 4000
-            header = f"💞 Результат анализа совместимости с {contact['person_name']}:\n\n"
-
-            if len(header) + len(analysis) <= max_chunk_size:
-                # Если сообщение достаточно короткое, отправляем как есть
-                chunks = [header + analysis]
-            else:
-                # Добавляем заголовок к первой части
-                current_chunk = header
-    
-                # Разбиваем по абзацам для сохранения структуры
-                paragraphs = analysis.split('\n\n')
-    
-                for paragraph in paragraphs:
-                    # Если текущий абзац не помещается в текущий чанк, создаем новый
-                    if len(current_chunk) + len(paragraph) + 2 > max_chunk_size:
-                        chunks.append(current_chunk)
-                        current_chunk = ""
-        
-                    # Добавляем абзац к текущему чанку
-                    if current_chunk and paragraph:
-                        current_chunk += "\n\n"
-                    current_chunk += paragraph
-    
-                # Добавляем последний чанк, если он не пустой
-                if current_chunk:
-                    chunks.append(current_chunk)
-
-            # Отправляем все части сообщения
-            for i, chunk in enumerate(chunks):
-                # Добавляем номер части, если частей больше одной
-                if len(chunks) > 1:
-                    part_indicator = f"[Часть {i+1}/{len(chunks)}]\n"
-                    chunk = part_indicator + chunk
+            # Проверяем, является ли пользователь премиум
+            is_premium = user.get("subscription_type") != "free"
+            
+            # Получаем количество контактов
+            contacts_count = len(operations.get_contacts(user_id))
+            
+            # Если это второй или более контакт, и пользователь на бесплатном тарифе,
+            # отправляем заблюренное сообщение и предложение
+            if contacts_count > 1 and not is_premium:
+                # Показываем заблюренный результат и предложение оплаты
+                preview_analysis = analysis[:150] + "..." if len(analysis) > 150 else analysis
                 
-                # Клавиатуру добавляем только к последнему сообщению
-                if i == len(chunks) - 1:
-                    await message.answer(chunk, reply_markup=get_main_menu())
+                await message.answer(
+                    f"💞 Результат анализа совместимости с {contact['person_name']}:\n\n"
+                    f"{preview_analysis}\n\n"
+                    "<span class='tg-spoiler'>Полный результат анализа скрыт. Для просмотра полного анализа требуется подписка.</span>",
+                    parse_mode="HTML",
+                    reply_markup=types.InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [types.InlineKeyboardButton(text=f"💎 Разблокировать анализ (90 ⭐️)", callback_data=f"unlock_compatibility:{existing_contact_id}")],
+                            [types.InlineKeyboardButton(text="💎 Оформить подписку", callback_data="subscribe_menu")]
+                        ]
+                    )
+                )
+            else:
+                # Разбиваем длинное сообщение на части (максимум 4000 символов для безопасности)
+                chunks = []
+                max_chunk_size = 4000
+                header = f"💞 Результат анализа совместимости с {contact['person_name']}:\n\n"
+
+                if len(header) + len(analysis) <= max_chunk_size:
+                    # Если сообщение достаточно короткое, отправляем как есть
+                    chunks = [header + analysis]
                 else:
-                    await message.answer(chunk)
+                    # Добавляем заголовок к первой части
+                    current_chunk = header
+        
+                    # Разбиваем по абзацам для сохранения структуры
+                    paragraphs = analysis.split('\n\n')
+        
+                    for paragraph in paragraphs:
+                        # Если текущий абзац не помещается в текущий чанк, создаем новый
+                        if len(current_chunk) + len(paragraph) + 2 > max_chunk_size:
+                            chunks.append(current_chunk)
+                            current_chunk = ""
+            
+                        # Добавляем абзац к текущему чанку
+                        if current_chunk and paragraph:
+                            current_chunk += "\n\n"
+                        current_chunk += paragraph
+        
+                    # Добавляем последний чанк, если он не пустой
+                    if current_chunk:
+                        chunks.append(current_chunk)
+
+                # Отправляем все части сообщения
+                for i, chunk in enumerate(chunks):
+                    # Добавляем номер части, если частей больше одной
+                    if len(chunks) > 1:
+                        part_indicator = f"[Часть {i+1}/{len(chunks)}]\n"
+                        chunk = part_indicator + chunk
+                    
+                    # Клавиатуру добавляем только к последнему сообщению
+                    if i == len(chunks) - 1:
+                        await message.answer(chunk, reply_markup=get_main_menu())
+                    else:
+                        await message.answer(chunk)
             
             # Возвращаемся в режим диалога
             await state.set_state(NatalChartStates.dialog_active)
@@ -904,14 +954,68 @@ async def proceed_with_compatibility_calculation(message: types.Message, state: 
     # Сохраняем анализ в базу
     operations.add_compatibility_analysis(user_id, contact_id, analysis)
     
-    # Отправляем результат
-    await message.answer(
-        f"💞 Результат анализа совместимости с {partner_name}:\n\n{analysis}",
-        reply_markup=get_main_menu()
-    )
+    # Проверяем, является ли пользователь премиум
+    is_premium = user.get("subscription_type") != "free"
+    
+    # Получаем количество контактов
+    contacts_count = len(operations.get_contacts(user_id))
+    
+    # Если это второй или более контакт, и пользователь на бесплатном тарифе,
+    # отправляем заблюренное сообщение и предложение
+    if contacts_count > 1 and not is_premium:
+        # Показываем заблюренный результат и предложение оплаты
+        preview_analysis = analysis[:150] + "..." if len(analysis) > 150 else analysis
+        
+        await message.answer(
+            f"💞 Результат анализа совместимости с {partner_name}:\n\n"
+            f"{preview_analysis}\n\n"
+            "<span class='tg-spoiler'>Полный результат анализа скрыт. Для просмотра полного анализа требуется подписка.</span>",
+            parse_mode="HTML",
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [types.InlineKeyboardButton(text=f"💎 Разблокировать анализ (90 ⭐️)", callback_data=f"unlock_compatibility:{contact_id}")],
+                    [types.InlineKeyboardButton(text="💎 Оформить подписку", callback_data="subscribe_menu")]
+                ]
+            )
+        )
+    else:
+        # Отправляем полный результат
+        await message.answer(
+            f"💞 Результат анализа совместимости с {partner_name}:\n\n{analysis}",
+            reply_markup=get_main_menu()
+        )
     
     # Возвращаемся в режим диалога
     await state.set_state(NatalChartStates.dialog_active)
+
+# Обработчик разблокировки анализа совместимости
+async def unlock_compatibility_callback(callback: types.CallbackQuery, state: FSMContext):
+    """Обработчик разблокировки анализа совместимости"""
+    _, contact_id = callback.data.split(":")
+    contact_id = int(contact_id)
+    
+    user_id = str(callback.from_user.id)
+    contact = operations.get_contact(contact_id)
+    
+    if not contact or contact['user_id'] != user_id:
+        await callback.answer("Контакт не найден или не принадлежит вам.")
+        return
+    
+    # Отправляем счет для разблокировки анализа совместимости
+    from aiogram.types import LabeledPrice
+    
+    prices = [LabeledPrice(label="Разблокировка анализа", amount=90)]
+    
+    await callback.message.answer_invoice(
+        title=f"Разбор совместимости с {contact['person_name']}",
+        description=f"Оплата за просмотр полного анализа совместимости с {contact['person_name']}",
+        payload=f"unlock_comp_{contact_id}_{user_id}",
+        provider_token="",
+        currency="XTR",
+        prices=prices
+    )
+    
+    await callback.answer()
 
 def register_handlers(dp: Dispatcher):
     """Регистрирует обработчики для работы с совместимостью"""
@@ -962,3 +1066,9 @@ def register_handlers(dp: Dispatcher):
     
     # Ввод координат партнера
     dp.message.register(process_partner_coords, CompatibilityStates.waiting_for_partner_coords)
+    
+    # Обработчик разблокировки анализа совместимости
+    dp.callback_query.register(
+        unlock_compatibility_callback,
+        lambda c: c.data.startswith("unlock_compatibility:")
+    )
