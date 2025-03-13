@@ -40,7 +40,7 @@ def create_user(user_id, username, first_name, last_name):
             last_name = excluded.last_name,
             last_activity = CURRENT_TIMESTAMP
         """,
-        (user_id, username, first_name, last_name, 10)
+        (user_id, username, first_name, last_name, 3)
     )
     conn.commit()
     conn.close()
@@ -478,3 +478,125 @@ def get_total_stats():
     
     conn.close()
     return stats
+
+# --- Новые функции для обработки платежей ---
+
+def check_user_has_active_payment(user_id):
+    """Проверяет, есть ли у пользователя активный платеж"""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT * FROM subscription_transactions 
+        WHERE user_id = ? AND status = 'pending'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (user_id,)
+    )
+    transaction = cur.fetchone()
+    conn.close()
+    return transaction is not None
+
+def get_pending_transaction(user_id):
+    """Получает активный платеж пользователя со статусом 'pending'"""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT * FROM subscription_transactions 
+        WHERE user_id = ? AND status = 'pending'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (user_id,)
+    )
+    transaction = cur.fetchone()
+    conn.close()
+    return transaction
+
+def cancel_pending_transactions(user_id):
+    """Отменяет все незавершенные транзакции пользователя"""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE subscription_transactions
+        SET status = 'cancelled'
+        WHERE user_id = ? AND status = 'pending'
+        """,
+        (user_id,)
+    )
+    cancelled = cur.rowcount
+    conn.commit()
+    conn.close()
+    return cancelled
+
+def update_transaction_status(transaction_id, status, additional_data=None):
+    """Обновляет статус транзакции и опционально дополнительные данные"""
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    # Базовый запрос на обновление статуса
+    query = """
+    UPDATE subscription_transactions
+    SET status = ?
+    WHERE transaction_id = ?
+    """
+    params = (status, transaction_id)
+    
+    # Если есть дополнительные данные, сохраняем их в виде JSON
+    if additional_data:
+        import json
+        json_data = json.dumps(additional_data)
+        query = """
+        UPDATE subscription_transactions
+        SET status = ?, additional_data = ?
+        WHERE transaction_id = ?
+        """
+        params = (status, json_data, transaction_id)
+    
+    cur.execute(query, params)
+    updated = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
+def get_transaction_by_payload(payload):
+    """Находит транзакцию по payload платежа"""
+    conn = get_connection()
+    cur = conn.cursor()
+    # Ищем в дополнительных данных или в других полях
+    try:
+        cur.execute(
+            """
+            SELECT * FROM subscription_transactions 
+            WHERE additional_data LIKE ? 
+            ORDER BY created_at DESC 
+            LIMIT 1
+            """,
+            (f'%"invoice_id":"{payload}"%',)
+        )
+        transaction = cur.fetchone()
+        
+        if not transaction:
+            # Пробуем найти по transaction_id если payload является числом
+            try:
+                transaction_id = int(payload)
+                cur.execute(
+                    """
+                    SELECT * FROM subscription_transactions 
+                    WHERE transaction_id = ?
+                    """,
+                    (transaction_id,)
+                )
+                transaction = cur.fetchone()
+            except (ValueError, TypeError):
+                pass
+            
+    except Exception as e:
+        print(f"Ошибка при поиске транзакции: {e}")
+        transaction = None
+        
+    conn.close()
+    return transaction

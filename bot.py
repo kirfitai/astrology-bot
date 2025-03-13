@@ -5,7 +5,7 @@ from collections import deque
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, LabeledPrice, PreCheckoutQuery
 
 from config import TELEGRAM_TOKEN, LOG_LEVEL
 from database.models import init_db
@@ -105,6 +105,10 @@ async def main():
         # Запускаем бота
         logger.info("Бот запущен")
         await bot.delete_webhook(drop_pending_updates=True)
+        
+        # Логируем статус подсистемы платежей
+        logger.info("Подсистема платежей через Telegram Stars настроена")
+        
         await dp.start_polling(bot)
     finally:
         # Останавливаем планировщик

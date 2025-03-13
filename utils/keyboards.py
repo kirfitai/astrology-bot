@@ -171,13 +171,30 @@ def get_subscription_plans():
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="1 месяц - $4.99", callback_data="subscribe:1_month")
+                InlineKeyboardButton(text="✨ 1 неделя - 90 ⭐️", callback_data="subscribe:1_week")
             ],
             [
-                InlineKeyboardButton(text="3 месяца - $9.99", callback_data="subscribe:3_month")
+                InlineKeyboardButton(text="✨ 1 месяц - 499 ⭐️", callback_data="subscribe:1_month")
             ],
             [
-                InlineKeyboardButton(text="1 год - $29.99", callback_data="subscribe:1_year")
+                InlineKeyboardButton(text="✨ 3 месяца - 999 ⭐️", callback_data="subscribe:3_month")
+            ],
+            [
+                InlineKeyboardButton(text="✨ 1 год - 2999 ⭐️", callback_data="subscribe:1_year")
+            ]
+        ]
+    )
+    return kb
+
+def get_payment_methods():
+    """Создает инлайн клавиатуру с методами оплаты"""
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⭐️ Оплатить звездами Telegram", callback_data="payment_method:telegram_stars")
+            ],
+            [
+                InlineKeyboardButton(text="↩️ Отменить", callback_data="cancel_payment")
             ]
         ]
     )

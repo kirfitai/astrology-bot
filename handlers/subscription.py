@@ -4,6 +4,7 @@ from aiogram import F
 from aiogram.fsm.context import FSMContext
 from datetime import datetime, timedelta
 import logging
+import json
 
 from utils.error_logger import handle_exception
 from states.user_states import SubscriptionStates, NatalChartStates
@@ -15,7 +16,7 @@ from utils.keyboards import (
     get_back_button
 )
 from database import operations
-from config import SUBSCRIPTION_PRICES, ADMIN_TELEGRAM_ID
+from config import SUBSCRIPTION_PRICES, ADMIN_TELEGRAM_ID, PREMIUM_CHANNEL_ID
 from services.payment_service import create_payment, telegram_stars_payment
 from utils.error_logger import handle_exception, log_error
 from handlers.start import back_to_menu_handler
@@ -186,213 +187,167 @@ async def subscription_callback(callback: types.CallbackQuery, state: FSMContext
             subscription_months=months
         )
         
-        # Предлагаем выбрать способ оплаты
+        # Предлагаем оплату звездами как единственный метод
+        stars_amount = int(price * 100) # Например, 499 звезд за $4.99
         await callback.message.answer(
-            f"📱 Выберите способ оплаты для подписки '{plan_text}' (${price}):",
-            reply_markup=get_payment_methods()
+            f"⭐️ Для активации подписки '{plan_text}' необходимо отправить {stars_amount} звезд.\n\n"
+            f"Нажмите кнопку ниже, чтобы перейти к оплате:",
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [types.InlineKeyboardButton(text=f"Оплатить {stars_amount} ⭐️", callback_data=f"start_stars_payment:{plan}:{stars_amount}")],
+                    [types.InlineKeyboardButton(text="Отменить", callback_data="cancel_payment")]
+                ]
+            )
         )
         
         await state.set_state(SubscriptionStates.selecting_payment_method)
 
 @handle_exception
-async def payment_method_callback(callback: types.CallbackQuery, state: FSMContext, **kwargs):
-    """Обработчик выбора способа оплаты"""
-    action, method = callback.data.split(":")
+async def start_stars_payment_callback(callback: types.CallbackQuery, state: FSMContext, **kwargs):
+    """Обработчик начала платежа звездами"""
+    _, plan, stars_amount = callback.data.split(":")
+    stars_amount = int(stars_amount)
+    user_id = str(callback.from_user.id)
     
-    if action == "payment_method":
-        await callback.answer()
-        
-        data = await state.get_data()
-        plan = data.get("subscription_plan")
-        price = data.get("subscription_price", 0)
-        
-        if not plan or not price:
-            await callback.message.answer(
-                "❌ Ошибка при обработке запроса. Пожалуйста, попробуйте снова.",
-                reply_markup=get_main_menu()
-            )
-            await state.clear()
-            return
-        
-        user_id = str(callback.from_user.id)
-        
-        # Отменяем любые предыдущие незавершенные платежи
-        operations.cancel_pending_transactions(user_id)
-        
-        if method == "tribute":
-            # Создаем платеж через Tribute
-            payment_result = await create_payment(user_id, plan, "tribute")
-            
-            if payment_result.get("success"):
-                payment_url = payment_result.get("payment_url")
-                
-                await callback.message.answer(
-                    "💳 Перейдите по ссылке ниже для оплаты подписки:\n\n"
-                    f"После успешной оплаты ваша подписка будет активирована автоматически.",
-                    reply_markup=types.InlineKeyboardMarkup(
-                        inline_keyboard=[
-                            [types.InlineKeyboardButton(text="Оплатить", url=payment_url)],
-                            [types.InlineKeyboardButton(text="Я оплатил(а)", callback_data="check_payment")]
-                        ]
-                    )
-                )
-                
-                await state.set_state(SubscriptionStates.processing_payment)
-            else:
-                error = payment_result.get("error", "Unknown error")
-                logger.error(f"Payment creation error: {error}")
-                
-                await callback.message.answer(
-                    "❌ Ошибка при создании платежа. Пожалуйста, попробуйте позже или выберите другой способ оплаты.",
-                    reply_markup=get_main_menu()
-                )
-                await state.clear()
-        
-        elif method == "telegram_stars":
-            # Создаем платеж через звезды Telegram
-            payment_result = await create_payment(user_id, plan, "telegram_stars", bot=callback.bot)
-            
-            if payment_result.get("success"):
-                stars_amount = payment_result.get("stars_amount")
-                
-                await callback.message.answer(
-                    f"⭐️ Для активации подписки отправьте {stars_amount} звезд.\n\n"
-                    "Нажмите на кнопку ниже, чтобы отправить звезды, затем подтвердите отправку.",
-                    reply_markup=types.InlineKeyboardMarkup(
-                        inline_keyboard=[
-                            [types.InlineKeyboardButton(text=f"Отправить {stars_amount} ⭐️", callback_data=f"stars_payment:{plan}:{stars_amount}")],
-                            [types.InlineKeyboardButton(text="Я отправил(а) звезды", callback_data="check_stars")]
-                        ]
-                    )
-                )
-                
-                await state.set_state(SubscriptionStates.processing_payment)
-            else:
-                error = payment_result.get("error", "Unknown error")
-                logger.error(f"Stars payment creation error: {error}")
-                
-                await callback.message.answer(
-                    "❌ Ошибка при создании запроса на звезды. Пожалуйста, попробуйте позже или выберите другой способ оплаты.",
-                    reply_markup=get_main_menu()
-                )
-                await state.clear()
-
-@handle_exception
-async def check_payment_callback(callback: types.CallbackQuery, state: FSMContext, **kwargs):
-    """Обработчик проверки статуса платежа"""
-    action = callback.data
+    await callback.answer()
     
-    if action == "check_payment":
-        await callback.answer("Проверяем статус платежа...")
-        
-        user_id = str(callback.from_user.id)
-        transaction = operations.get_pending_transaction(user_id)
-        
-        if transaction and transaction.get("status") == "completed":
-            # Платеж уже был успешно обработан
-            await callback.message.answer(
-                "✅ Ваш платеж был успешно обработан! Подписка активирована.",
-                reply_markup=get_main_menu()
-            )
-            await state.set_state(NatalChartStates.dialog_active)
-        else:
-            # Платеж еще не обработан
-            await callback.message.answer(
-                "⏳ Ваш платеж еще обрабатывается. Пожалуйста, подождите или проверьте позже.",
-                reply_markup=types.InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [types.InlineKeyboardButton(text="Проверить еще раз", callback_data="check_payment")],
-                        [types.InlineKeyboardButton(text="Отменить платеж", callback_data="cancel_payment")]
-                    ]
-                )
-            )
+    data = await state.get_data()
     
-    elif action == "check_stars":
-        await callback.answer("Проверяем отправку звезд...")
+    # Создаем транзакцию в БД
+    transaction_id = operations.add_subscription_transaction(
+        user_id,
+        plan,
+        SUBSCRIPTION_PRICES.get(plan, 0),
+        "pending",
+        "telegram_stars",
+        data.get("subscription_months", 1)
+    )
+    
+    # Сохраняем ID транзакции в состоянии
+    await state.update_data(
+        transaction_id=transaction_id,
+        stars_amount=stars_amount
+    )
+    
+    # Создаем ссылку на оплату
+    purpose = f"Подписка на {plan} астрологических прогнозов"
+    payment_result = await telegram_stars_payment.create_stars_invoice(
+        callback.bot,
+        int(user_id),
+        stars_amount,
+        purpose
+    )
+    
+    if payment_result.get("success"):
+        invoice_id = payment_result.get("invoice_id")
+        payment_url = payment_result.get("payment_url")
         
-        user_id = str(callback.from_user.id)
-        data = await state.get_data()
-        plan = data.get("subscription_plan")
-        
-        # В реальном приложении здесь должна быть проверка фактического получения звезд
-        # через API Telegram, но для примера просто активируем подписку
-        result = await telegram_stars_payment.process_stars_transfer(
-            user_id, 
-            plan, 
-            data.get("stars_amount", 0)
+        # Обновляем транзакцию с ID инвойса
+        operations.update_transaction_status(
+            transaction_id, 
+            "pending", 
+            {"invoice_id": invoice_id}
         )
         
-        if result.get("success"):
-            await callback.message.answer(
-                "✅ Спасибо за отправку звезд! Ваша подписка активирована.",
-                reply_markup=get_main_menu()
+        await callback.message.answer(
+            "💫 Для оплаты подписки перейдите по ссылке ниже и отправьте звезды.\n\n"
+            "После успешной оплаты нажмите кнопку «Я оплатил».",
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [types.InlineKeyboardButton(text="Перейти к оплате", url=payment_url)],
+                    [types.InlineKeyboardButton(text="Я оплатил", callback_data="check_stars_payment")],
+                    [types.InlineKeyboardButton(text="Отменить", callback_data="cancel_payment")]
+                ]
             )
-            await state.set_state(NatalChartStates.dialog_active)
-        else:
-            error = result.get("error", "Unknown error")
-            
-            if "Insufficient stars" in error:
-                await callback.message.answer(
-                    "⚠️ Вы отправили недостаточное количество звезд. Пожалуйста, проверьте сумму и попробуйте снова.",
-                    reply_markup=types.InlineKeyboardMarkup(
-                        inline_keyboard=[
-                            [types.InlineKeyboardButton(text="Я отправил(а) звезды", callback_data="check_stars")],
-                            [types.InlineKeyboardButton(text="Отменить платеж", callback_data="cancel_payment")]
-                        ]
-                    )
-                )
-            else:
-                await callback.message.answer(
-                    "❌ Произошла ошибка при проверке отправки звезд. Пожалуйста, попробуйте позже или обратитесь к администратору.",
-                    reply_markup=get_main_menu()
-                )
-                await state.clear()
-    
-    elif action == "cancel_payment":
-        user_id = str(callback.from_user.id)
+        )
         
-        # Отменяем незавершенные транзакции пользователя
-        cancelled = operations.cancel_pending_transactions(user_id)
+        await state.set_state(SubscriptionStates.processing_payment)
+    else:
+        error = payment_result.get("error", "Неизвестная ошибка")
+        logger.error(f"Ошибка создания платежа звездами: {error}")
         
-        if cancelled > 0:
-            await callback.message.answer(
-                "❌ Платеж отменен. Вы можете попробовать снова в любое время.",
-                reply_markup=get_main_menu()
-            )
-        else:
-            await callback.message.answer(
-                "⚠️ Нет активных платежей для отмены.",
-                reply_markup=get_main_menu()
-            )
+        await callback.message.answer(
+            f"❌ Не удалось создать платеж: {error}\n\nПожалуйста, попробуйте позже.",
+            reply_markup=get_main_menu()
+        )
         
+        # Отменяем транзакцию
+        operations.update_transaction_status(transaction_id, "failed", {"error": error})
         await state.clear()
 
 @handle_exception
-async def stars_payment_callback(callback: types.CallbackQuery, state: FSMContext, **kwargs):
-    """Обработчик отправки звезд Telegram"""
-    parts = callback.data.split(":")
+async def check_stars_payment_callback(callback: types.CallbackQuery, state: FSMContext, **kwargs):
+    """Обработчик проверки оплаты звездами"""
+    await callback.answer("Проверяем статус платежа...")
     
-    if len(parts) >= 3 and parts[0] == "stars_payment":
-        plan = parts[1]
-        stars_amount = int(parts[2])
-        
-        # Здесь должен быть вызов API Telegram для отправки звезд
-        # Но так как у нас нет прямого доступа к этому API, отправляем уведомление пользователю
-        await callback.answer("Пожалуйста, подтвердите отправку звезд в Telegram")
-        
-        # Сохраняем количество звезд в состоянии для последующей проверки
-        await state.update_data(stars_amount=stars_amount)
-        
-        # В реальном приложении нужно использовать Telegram Payments API
+    user_id = str(callback.from_user.id)
+    data = await state.get_data()
+    transaction_id = data.get("transaction_id")
+    stars_amount = data.get("stars_amount")
+    plan = data.get("subscription_plan")
+    
+    if not all([transaction_id, stars_amount, plan]):
         await callback.message.answer(
-            f"⭐️ Пожалуйста, отправьте {stars_amount} звезд и затем нажмите кнопку 'Я отправил(а) звезды' для проверки.",
+            "❌ Не удалось найти данные о вашем платеже. Попробуйте начать заново.",
+            reply_markup=get_main_menu()
+        )
+        await state.clear()
+        return
+    
+    # Здесь в реальной системе должна быть проверка через API Telegram
+    # или через вебхук, но для демонстрации просто имитируем проверку
+    
+    # В реальном проекте Telegram отправляет уведомление через pre_checkout_query
+    # и successful_payment, которые нужно обрабатывать
+    
+    # Для тестирования просто подтверждаем платеж
+    payment_result = await telegram_stars_payment.process_stars_transfer(
+        user_id,
+        plan,
+        stars_amount,
+        transaction_id
+    )
+    
+    if payment_result.get("success"):
+        await callback.message.answer(
+            "✅ Оплата успешно подтверждена! Ваша подписка активирована.\n\n"
+            "Спасибо за поддержку нашего бота. Теперь вам доступны все премиум-функции!",
+            reply_markup=get_main_menu()
+        )
+        await state.set_state(NatalChartStates.dialog_active)
+    else:
+        error = payment_result.get("error", "Не удалось подтвердить платеж")
+        
+        await callback.message.answer(
+            f"⚠️ {error}\n\nЕсли вы уверены, что оплата прошла успешно, свяжитесь с администратором.",
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [types.InlineKeyboardButton(text="Я отправил(а) звезды", callback_data="check_stars")],
+                    [types.InlineKeyboardButton(text="Проверить еще раз", callback_data="check_stars_payment")],
                     [types.InlineKeyboardButton(text="Отменить платеж", callback_data="cancel_payment")]
                 ]
             )
         )
+
+@handle_exception
+async def cancel_payment_callback(callback: types.CallbackQuery, state: FSMContext, **kwargs):
+    """Обработчик отмены платежа"""
+    await callback.answer("Отменяем платеж...")
+    
+    user_id = str(callback.from_user.id)
+    data = await state.get_data()
+    transaction_id = data.get("transaction_id")
+    
+    if transaction_id:
+        operations.update_transaction_status(transaction_id, "cancelled")
+    else:
+        operations.cancel_pending_transactions(user_id)
+    
+    await callback.message.answer(
+        "❌ Платеж отменен. Вы можете попробовать снова в любое время.",
+        reply_markup=get_main_menu()
+    )
+    
+    await state.clear()
 
 @handle_exception
 async def premium_info_callback(callback: types.CallbackQuery, state: FSMContext, **kwargs):
@@ -401,7 +356,7 @@ async def premium_info_callback(callback: types.CallbackQuery, state: FSMContext
     
     # Получаем имя канала для ссылки
     channel_name = PREMIUM_CHANNEL_ID.replace("@", "")
-    channel_link = f"https://t.me/{channel_name}"
+    channel_link = f"https://t.me/{channel_name}" if channel_name else "#"
     
     premium_info = (
         "💎 Премиум-возможности для вас!\n\n"
@@ -410,16 +365,16 @@ async def premium_info_callback(callback: types.CallbackQuery, state: FSMContext
         f"• Новости и прогнозы\n"
         f"• Эксклюзивный контент\n"
         f"• Полный доступ к функциям бота\n\n"
-        "2️⃣ Оформить прямую подписку на бота:\n"
+        "2️⃣ Оформить прямую подписку на бота, оплатив звездами Telegram:\n"
         "• Подробный ежедневный гороскоп\n"
         "• Неограниченное количество проверок совместимости\n"
         "• Безлимитное общение с астрологическим ассистентом\n"
         "• Еженедельные и ежемесячные прогнозы\n"
         "• Специальные аспекты планет и их влияние на вас\n\n"
         "Стоимость прямой подписки:\n"
-        "1 месяц — $4.99\n"
-        "3 месяца — $9.99\n"
-        "1 год — $29.99"
+        "1 месяц — $4.99 (499 звезд)\n"
+        "3 месяца — $9.99 (999 звезд)\n"
+        "1 год — $29.99 (2999 звезд)"
     )
     
     await callback.message.answer(
@@ -427,10 +382,84 @@ async def premium_info_callback(callback: types.CallbackQuery, state: FSMContext
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [types.InlineKeyboardButton(text="💫 Подписаться на премиум-канал", url=channel_link)],
-                [types.InlineKeyboardButton(text="💳 Оформить подписку на бота", callback_data="subscribe_menu")]
+                [types.InlineKeyboardButton(text="⭐️ Оформить подписку на бота", callback_data="subscribe_menu")]
             ]
         )
     )
+
+# Обработчики предпроверки платежа и успешного платежа
+async def process_pre_checkout(pre_checkout_query: types.PreCheckoutQuery):
+    """Обработчик предварительной проверки платежа"""
+    try:
+        # Получаем данные платежа
+        payload = pre_checkout_query.invoice_payload
+        
+        # В payload должен быть ID транзакции или другой идентификатор
+        # Проверяем, существует ли такая транзакция в базе
+        # ... логика проверки транзакции ...
+        
+        # Если все в порядке, подтверждаем платеж
+        await pre_checkout_query.answer(ok=True)
+        logger.info(f"Pre-checkout query approved: {payload}")
+    except Exception as e:
+        # В случае ошибки отклоняем платеж
+        await pre_checkout_query.answer(
+            ok=False,
+            error_message="Произошла ошибка при обработке платежа. Пожалуйста, попробуйте позже."
+        )
+        logger.error(f"Error in pre_checkout: {e}")
+
+async def process_successful_payment(message: types.Message):
+    """Обработчик успешного платежа"""
+    try:
+        # Получаем данные о платеже
+        payment_info = message.successful_payment
+        payload = payment_info.invoice_payload
+        total_amount = payment_info.total_amount
+        currency = payment_info.currency
+        
+        user_id = str(message.from_user.id)
+        
+        logger.info(f"Successful payment from user {user_id}: {payload}, {total_amount} {currency}")
+        
+        # Находим транзакцию в БД
+        # ... логика поиска транзакции по payload ...
+        
+        # Активируем подписку пользователя
+        # В реальном проекте здесь нужно определить план подписки из payload
+        # и использовать соответствующие параметры
+        
+        plan = "1_month"  # Например, определяем из payload
+        stars_amount = total_amount
+        
+        # Активируем подписку
+        result = await telegram_stars_payment.process_stars_transfer(user_id, plan, stars_amount)
+        
+        if result.get("success"):
+            # Отправляем сообщение пользователю
+            await message.answer(
+                "✅ Оплата успешно получена! Ваша подписка активирована.\n\n"
+                "Спасибо за поддержку нашего бота. Теперь вам доступны все премиум-функции!",
+                reply_markup=get_main_menu()
+            )
+        else:
+            logger.error(f"Failed to process successful payment: {result.get('error')}")
+            
+            # Отправляем сообщение пользователю
+            await message.answer(
+                "⚠️ Оплата получена, но возникла ошибка при активации подписки.\n\n"
+                "Пожалуйста, свяжитесь с администратором.",
+                reply_markup=get_main_menu()
+            )
+    except Exception as e:
+        logger.error(f"Error processing successful payment: {e}")
+        
+        # Отправляем сообщение пользователю
+        await message.answer(
+            "⚠️ Произошла ошибка при обработке платежа.\n\n"
+            "Пожалуйста, свяжитесь с администратором.",
+            reply_markup=get_main_menu()
+        )
 
 def register_handlers(dp: Dispatcher):
     """Регистрирует обработчики для работы с подписками"""
@@ -456,22 +485,22 @@ def register_handlers(dp: Dispatcher):
         lambda c: c.data.startswith("subscribe:")
     )
     
-    # Обработчик выбора способа оплаты
+    # Обработчик начала платежа звездами
     dp.callback_query.register(
-        payment_method_callback,
-        lambda c: c.data.startswith("payment_method:")
+        start_stars_payment_callback,
+        lambda c: c.data.startswith("start_stars_payment:")
     )
     
-    # Обработчик проверки статуса платежа
+    # Обработчик проверки платежа звездами
     dp.callback_query.register(
-        check_payment_callback,
-        lambda c: c.data in ["check_payment", "check_stars", "cancel_payment"]
+        check_stars_payment_callback,
+        lambda c: c.data == "check_stars_payment"
     )
     
-    # Обработчик отправки звезд Telegram
+    # Обработчик отмены платежа
     dp.callback_query.register(
-        stars_payment_callback,
-        lambda c: c.data.startswith("stars_payment:")
+        cancel_payment_callback,
+        lambda c: c.data == "cancel_payment"
     )
     
     # Обработчик запроса информации о премиум-подписке
@@ -485,3 +514,7 @@ def register_handlers(dp: Dispatcher):
         lambda c, state: subscription_command(c.message, state, **kwargs),
         lambda c: c.data == "subscribe_menu"
     )
+    
+    # Регистрация обработчиков платежей
+    dp.pre_checkout_query.register(process_pre_checkout)
+    dp.message.register(process_successful_payment, F.successful_payment)

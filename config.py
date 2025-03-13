@@ -25,6 +25,7 @@ MAX_MESSAGES = int(os.getenv("MAX_MESSAGES", "10"))
 # Настройки подписок
 FREE_MESSAGES_LIMIT = int(os.getenv("FREE_MESSAGES_LIMIT", "3"))
 SUBSCRIPTION_PRICES = {
+    "1_week": float(os.getenv("PRICE_1_WEEK", "0.99")),
     "1_month": float(os.getenv("PRICE_1_MONTH", "4.99")),
     "3_month": float(os.getenv("PRICE_3_MONTH", "9.99")),
     "1_year": float(os.getenv("PRICE_1_YEAR", "29.99"))

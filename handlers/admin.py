@@ -178,7 +178,7 @@ async def admin_menu_handler(message: types.Message, state: FSMContext):
     elif message.text == "⚙️ Настройки":
         settings_message = (
             "⚙️ Настройки бота:\n\n"
-            "• Бесплатных сообщений: 10\n"
+            "• Бесплатных сообщений: 3\n"
             "• Токены API OpenAI: настроены\n"
             "• Токен Telegram: настроен\n"
             "• База данных: SQLite\n\n"
